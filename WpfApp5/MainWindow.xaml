@@ -168,7 +168,7 @@
                 <StackPanel>
                     <TextBlock Text="Моделювання і усунення взаємоблокувань та голодування"
                                Foreground="#CDD6F4" FontSize="20" FontWeight="Bold"/>
-                    <TextBlock Text="Лабораторна робота №5 | Пункт 6 — моделювання алгоритму банкіра"
+                    <TextBlock Text="Лабораторна робота №5 | Моделювання алгоритму банкіра"
                                Foreground="#6C7086" FontSize="12" Margin="0,2,0,0"/>
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
