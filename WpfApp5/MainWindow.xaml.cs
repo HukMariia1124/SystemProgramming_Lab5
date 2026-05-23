@@ -206,7 +206,6 @@ public partial class MainWindow : Window
         {
             AddLog($"Алгоритм банкіра: небезпечний стан. Процеси {FormatProcessSequence(safety.Unfinished)} можуть залишитися без ресурсів.", Brushes.Orange);
         }
-
         if (safety.IsSafe)
         {
             SetStatus("⬤ Безпечний стан", "Алгоритм банкіра знайшов послідовність завершення всіх процесів.", "#1E3A1E", "#A6E3A1");
@@ -304,9 +303,101 @@ public partial class MainWindow : Window
                 changed = true;
             }
         }
-
         var unfinished = Enumerable.Range(0, processCount).Where(i => !finish[i]).ToList();
         return new SafetyResult(unfinished.Count == 0, sequence, unfinished, initialWork, (int[])work.Clone(), steps);
+    }
+
+    // Обробляє запит ресурсів від процесу — повна реалізація алгоритму банкіра.
+    private void ResourceRequestButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (!ReadStateFromUi())
+            return;
+
+        var processCount = _allocation.GetLength(0);
+        var resourceCount = _allocation.GetLength(1);
+
+        var pid = ParseSingleNumber(RequestPidText.Text, 0);
+        if (pid < 0 || pid >= processCount)
+        {
+            MessageBox.Show($"Номер процесу має бути від 0 до {processCount - 1}.",
+                "Некоректний запит", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var request = ParseVector(RequestVectorText.Text, resourceCount, defaultValue: 0);
+
+        AddLog("=== Запит ресурсів ===", Brushes.White);
+        AddLog($"P{pid} запитує: {FormatVector(request)}.", Brushes.LightBlue);
+
+        // Крок 1 — запит не перевищує Need
+        AddLog($"Крок 1: перевіряємо що Request {FormatVector(request)} <= Need[P{pid}] {FormatVector(GetRow(_need, pid))}.", Brushes.LightBlue);
+        for (var j = 0; j < resourceCount; j++)
+        {
+            if (request[j] <= _need[pid, j])
+                continue;
+
+            AddLog($"  R{j + 1}: {request[j]} > Need[P{pid}][R{j + 1}] = {_need[pid, j]} — процес перевищив заявлений максимум. Запит відхилено.", Brushes.OrangeRed);
+            SetStatus("⬤ Запит відхилено", "Процес перевищив заявлений максимум.", "#3A1E1E", "#F38BA8");
+            return;
+        }
+        AddLog($"  Крок 1 пройдено ✓", Brushes.LightGreen);
+
+        // Крок 2 — є достатньо вільних ресурсів
+        AddLog($"Крок 2: перевіряємо що Request {FormatVector(request)} <= Available {FormatVector(_available)}.", Brushes.LightBlue);
+        for (var j = 0; j < resourceCount; j++)
+        {
+            if (request[j] <= _available[j])
+                continue;
+
+            AddLog($"  R{j + 1}: {request[j]} > Available[R{j + 1}] = {_available[j]} — ресурс недоступний. P{pid} повинен чекати.", Brushes.Orange);
+            SetStatus("⬤ Процес чекає", "Недостатньо вільних ресурсів.", "#3A321E", "#F9E2AF");
+            return;
+        }
+        AddLog($"  Крок 2 пройдено ✓", Brushes.LightGreen);
+
+        // Крок 3 — тимчасово виділяємо і перевіряємо безпечність
+        var savedAvailable = (int[])_available.Clone();
+        var savedAllocation = (int[,])_allocation.Clone();
+        var savedNeed = (int[,])_need.Clone();
+
+        for (var j = 0; j < resourceCount; j++)
+        {
+            _available[j] -= request[j];
+            _allocation[pid, j] += request[j];
+            _need[pid, j] -= request[j];
+        }
+
+        AddLog($"Крок 3: тимчасово змінюємо стан системи (уявно виділяємо ресурси):", Brushes.LightBlue);
+        AddLog($"  Available:      {FormatVector(savedAvailable)} → {FormatVector(_available)}", Brushes.LightBlue);
+        AddLog($"  Allocation[P{pid}]: {FormatVector(GetRow(savedAllocation, pid))} → {FormatVector(GetRow(_allocation, pid))}", Brushes.LightBlue);
+        AddLog($"  Need[P{pid}]:      {FormatVector(GetRow(savedNeed, pid))} → {FormatVector(GetRow(_need, pid))}", Brushes.LightBlue);
+        AddLog($"Запускаємо алгоритм безпечності на новому стані...", Brushes.LightBlue);
+
+        // Крок 4 — перевірка безпечності
+        var safety = CheckSafety();
+        LogSafetyTrace(safety);
+
+        if (safety.IsSafe)
+        {
+            AddLog($"Новий стан безпечний → виділення підтверджується реально.", Brushes.LightGreen);
+            AddLog($"Нова послідовність: {FormatProcessSequence(safety.Sequence)}.", Brushes.LightGreen);
+            BindAllGrids();
+            SetStatus("⬤ Запит задоволено", $"P{pid} отримав ресурси. Система безпечна.", "#1E3A1E", "#A6E3A1");
+        }
+        else
+        {
+            // Відкочуємо назад
+            _available = savedAvailable;
+            _allocation = savedAllocation;
+            _need = savedNeed;
+
+            AddLog($"Новий стан небезпечний → відкочуємо зміни назад.", Brushes.Orange);
+            AddLog($"  Available повернуто:      {FormatVector(_available)}", Brushes.Orange);
+            AddLog($"  Allocation[P{pid}] повернуто: {FormatVector(GetRow(_allocation, pid))}", Brushes.Orange);
+            AddLog($"  Need[P{pid}] повернуто:      {FormatVector(GetRow(_need, pid))}", Brushes.Orange);
+            AddLog($"Запит P{pid} відхилено.", Brushes.Orange);
+            SetStatus("⬤ Запит відхилено", "Виділення призвело б до небезпечного стану.", "#3A321E", "#F9E2AF");
+        }
     }
 
     // Перераховує Need і Available на основі поточних матриць.
@@ -400,7 +491,6 @@ public partial class MainWindow : Window
         }
         return rows;
     }
-
     // Зчитує значення з DataGrid назад у матрицю.
     private static int[,] ReadMatrixFromGrid(DataGrid grid, int processCount, int resourceCount)
     {
